@@ -257,6 +257,9 @@ class SurveyState(StatesGroup):
     waiting_grade_letter = State()
     answering = State()
 
+class SupportState(StatesGroup):
+    waiting_message = State()
+
 # ================= BAZA ISHGA TUSHIRISH =================
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
@@ -272,18 +275,33 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Admin reply qilganda o'quvchini aniqlash jadvali
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS feedback_map (
+                admin_msg_id INTEGER PRIMARY KEY,
+                user_id INTEGER,
+                user_name TEXT
+            )
+        """)
         await db.commit()
 
 # ================= TUGMALAR =================
 def get_main_keyboard(is_admin: bool = False):
     keyboard = [
         [KeyboardButton(text="📝 So'rovnomani to'ldirish")],
+        [KeyboardButton(text="✉️ Maslahatchiga murojaat")],
         [KeyboardButton(text="🎭 7 ta rivojlanish klubi"), KeyboardButton(text="👥 O'quvchilar kengashi")],
         [KeyboardButton(text="👨‍💼 Maktab maslahatchisi")]
     ]
     if is_admin:
         keyboard.append([KeyboardButton(text="📊 Excel hisobotni yuklash")])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+def get_cancel_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="❌ Bekor qilish")]],
+        resize_keyboard=True
+    )
 
 def get_grade_num_keyboard():
     keyboard = [
@@ -314,7 +332,8 @@ async def cmd_start(message: Message, state: FSMContext):
         f"Assalomu alaykum, <b>{message.from_user.full_name}</b>!\n\n"
         "🏫 <b>Maktab maslahatchisining rasmiy portaliga xush kelibsiz.</b>\n"
         "Ushbu bot orqali siz o'z qiziqishlaringiz bo'yicha so'rovnomalarda qatnashishingiz, "
-        "maktab klublari va kengash faoliyati bilan tanishishingiz mumkin.\n\n"
+        "maktab klublari va kengash faoliyati bilan tanishishingiz hamda "
+        "maslahatchiga to'g'ridan-to'g'ri murojaat yo'llashingiz mumkin.\n\n"
         "Kerakli bo'limni tanlang:",
         reply_markup=get_main_keyboard(is_admin)
     )
@@ -331,6 +350,84 @@ async def handle_clubs(message: Message):
 @dp.message(F.text == "👥 O'quvchilar kengashi")
 async def handle_council(message: Message):
     await message.answer(COUNCIL_INFO)
+
+# ================= FOYDALANUVCHILAR BILAN YOZISHISH (MUROJAAT) =================
+@dp.message(F.text == "✉️ Maslahatchiga murojaat")
+async def ask_counselor_start(message: Message, state: FSMContext):
+    await message.answer(
+        "✍️ <b>Maslahatchiga yo'llamoqchi bo'lgan savol yoki murojaatingizni yozing:</b>\n\n"
+        "<i>Siz yozgan xabar maslahatchiga yetkaziladi va bot orqali javob qaytariladi. "
+        "Bekor qilish uchun pastdagi tugmani bosing.</i>",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(SupportState.waiting_message)
+
+@dp.message(SupportState.waiting_message, F.text == "❌ Bekor qilish")
+async def cancel_support_message(message: Message, state: FSMContext):
+    await state.clear()
+    is_admin = (message.from_user.id == ADMIN_ID)
+    await message.answer("Murojaat bekor qilindi.", reply_markup=get_main_keyboard(is_admin))
+
+@dp.message(SupportState.waiting_message)
+async def process_user_murojaat(message: Message, state: FSMContext):
+    u_name = message.from_user.full_name
+    u_id = message.from_user.id
+    u_text = message.text
+
+    # Xabarni maslahatchi (Admin)ga yuborish
+    try:
+        admin_forward = await bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"📬 <b>Yangi murojaat keldi:</b>\n"
+                 f"👤 <b>Foydalanuvchi:</b> {u_name} (ID: <code>{u_id}</code>)\n"
+                 f"━━━━━━━━━━━━━━━━━━━━\n"
+                 f"💬 <b>Xabar matni:</b>\n{u_text}\n\n"
+                 f"<i>Ushbu xabarga javob berish uchun Telegram'ning 'Ответить' (Reply) tugmasidan foydalaning.</i>"
+        )
+
+        # Qaysi xabar qaysi foydalanuvchiga tegishli ekanini bazada eslab qolish
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "INSERT INTO feedback_map (admin_msg_id, user_id, user_name) VALUES (?, ?, ?)",
+                (admin_forward.message_id, u_id, u_name)
+            )
+            await db.commit()
+
+        is_admin = (u_id == ADMIN_ID)
+        await message.answer(
+            "✅ <b>Xabaringiz maktab maslahatchisiga yetkazildi!</b>\n"
+            "Tez orada bot orqali sizga javob qaytariladi.",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+    except Exception as e:
+        await message.answer("Xabarni yuborishda xatolik yuz berdi. Keyinroq urinib ko'ring.")
+    
+    await state.clear()
+
+# ================= ADMIN REPLY ORQALI JAVOB QAYTARISH =================
+@dp.message(F.chat.id == ADMIN_ID, F.reply_to_message)
+async def admin_reply_to_user(message: Message):
+    replied_id = message.reply_to_message.message_id
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT user_id, user_name FROM feedback_map WHERE admin_msg_id = ?", (replied_id,)) as cursor:
+            row = await cursor.fetchone()
+
+    if row:
+        target_user_id, target_name = row
+        try:
+            await bot.send_message(
+                chat_id=target_user_id,
+                text=f"👨‍💼 <b>Maktab maslahatchisidan javob keldi:</b>\n"
+                     f"━━━━━━━━━━━━━━━━━━━━\n"
+                     f"{message.text}"
+            )
+            await message.reply(f"✅ Javobingiz <b>{target_name}</b>ga muvaffaqiyatli yuborildi!")
+        except Exception:
+            await message.reply("❌ Javobni yuborib bo'lmadi (foydalanuvchi botni bloklagan bo'lishi mumkin).")
+    else:
+        # Agar admin boshqa ixtiyoriy xabarga reply qilgan bo'lsa
+        pass
 
 # ================= SO'ROVNOMA ZANJIRI =================
 @dp.message(F.text == "📝 So'rovnomani to'ldirish")
@@ -528,7 +625,6 @@ async def generate_excel_report(message: Message):
             
             worksheet = writer.sheets[sheet_name]
             
-            # Sarlavha formati (To'q ko'k fon, oq qalin yozuv)
             header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
             header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
             border_style = Border(
