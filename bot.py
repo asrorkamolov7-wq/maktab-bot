@@ -2,6 +2,7 @@ import asyncio
 import os
 import aiosqlite
 import pandas as pd
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -164,7 +165,7 @@ def get_grade_letter_keyboard():
     keyboard = [[InlineKeyboardButton(text=l, callback_data=f"glet_{l}") for l in letters]]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# ================= BOT ISH BOSHLANISHI =================
+# ================= BOT VA DISPATCHER =================
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -327,46 +328,76 @@ async def send_excel_report(message: Message):
         await message.answer("Ushbu bo'lim faqat maktab maslahatchisi uchun ochiq!")
         return
 
-    await message.answer("⏳ So'rovnoma natijalari Excel faylga jamlanmoqda...")
+    await message.answer("⏳ So'rovnoma natijalari sinflar bo'yicha Excel faylga jamlanmoqda...")
 
     async with aiosqlite.connect(DB_NAME) as db:
-        query = """
-            SELECT grade AS "Sinf", full_name AS "F.I.SH", survey_title AS "So'rovnoma",
-                   question AS "Savol", answer AS "Javob", created_at AS "To'ldirilgan vaqt"
-            FROM answers
-            ORDER BY grade ASC, full_name ASC, id ASC
-        """
+        query = "SELECT user_id, full_name, grade, survey_title, question, answer, id FROM answers ORDER BY id ASC"
         async with db.execute(query) as cursor:
             rows = await cursor.fetchall()
-            cols = [col[0] for col in cursor.description]
 
     if not rows:
         await message.answer("Bazada hozircha to'ldirilgan so'rovnomalar mavjud emas.")
         return
 
-    df = pd.DataFrame(rows, columns=cols)
+    raw_df = pd.DataFrame(rows, columns=["user_id", "full_name", "grade", "survey_title", "question", "answer", "id"])
     file_path = "Maktab_Sorovnoma_Hisoboti.xlsx"
 
     with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name="Umumiy barcha sinflar", index=False)
-        for grade in df["Sinf"].unique():
-            grade_df = df[df["Sinf"] == grade]
+        unique_grades = sorted(raw_df["grade"].unique())
+        
+        for grade in unique_grades:
+            grade_data = raw_df[raw_df["grade"] == grade]
+            students = grade_data[["user_id", "full_name"]].drop_duplicates().values.tolist()
+            
+            questions = []
+            for q in grade_data["question"]:
+                if q not in questions:
+                    questions.append(q)
+            
+            rows_list = []
+            for idx, (u_id, fio) in enumerate(students, start=1):
+                row = {
+                    "T/r": idx,
+                    "F.I.SH": fio
+                }
+                st_answers = grade_data[(grade_data["user_id"] == u_id) & (grade_data["full_name"] == fio)]
+                for q in questions:
+                    ans_series = st_answers[st_answers["question"] == q]["answer"]
+                    row[q] = ans_series.iloc[-1] if not ans_series.empty else "-"
+                
+                rows_list.append(row)
+            
+            sheet_df = pd.DataFrame(rows_list)
             sheet_title = str(grade).replace("/", "-")[:30]
-            grade_df.to_excel(writer, sheet_name=sheet_title, index=False)
+            sheet_df.to_excel(writer, sheet_name=sheet_title, index=False)
 
     doc = FSInputFile(file_path)
     await message.answer_document(
         doc,
-        caption="📊 Barcha sinflar bo'yicha to'liq hisobot fayli."
+        caption="📊 Barcha sinflar bo'yicha shakllantirilgan Excel hisobot."
     )
 
     if os.path.exists(file_path):
         os.remove(file_path)
 
-# ================= ISHGA TUSHIRISH =================
+# ================= RENDER UCHUN MINI VEB-SERVER (UXLAMASLIK UCHUN) =================
+async def handle_ping(request):
+    return web.Response(text="Bot faol ishlamoqda!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+
+# ================= ASOSIY ISHGA TUSHIRISH =================
 async def main():
     await init_db()
-    print("Bot muvaffaqiyatli ishga tushdi!")
+    await start_web_server()
+    print("Bot va veb-server muvaffaqiyatli ishga tushdi!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
