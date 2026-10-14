@@ -698,6 +698,20 @@ async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     print("Bot va veb-server muvaffaqiyatli ishga tushdi!")
     await dp.start_polling(bot)
+    # ================= SO'ROVNOMANI BEKOR QILISH =================
+@dp.message(F.text == "❌ Bekor qilish")
+async def cancel_any_action(message: Message, state: FSMContext):
+    await state.clear()
+    is_admin = (message.from_user.id == ADMIN_ID)
+    await message.answer("Jarayon bekor qilindi.", reply_markup=get_main_keyboard(is_admin))
+
+@dp.callback_query(F.data == "cancel_survey")
+async def cancel_survey_callback(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    is_admin = (callback.from_user.id == ADMIN_ID)
+    await callback.message.delete()
+    await callback.message.answer("So'rovnoma bekor qilindi.", reply_markup=get_main_keyboard(is_admin))
+    await callback.answer()
 
 if __name__ == "__main__":
     asyncio.run(main())
