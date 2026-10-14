@@ -380,7 +380,7 @@ async def send_excel_report(message: Message):
     if os.path.exists(file_path):
         os.remove(file_path)
 
-# ================= RENDER UCHUN MINI VEB-SERVER (UXLAMASLIK UCHUN) =================
+# ================= RENDER UCHUN MINI VEB-SERVER =================
 async def handle_ping(request):
     return web.Response(text="Bot faol ishlamoqda!")
 
@@ -389,7 +389,7 @@ async def start_web_server():
     app.router.add_get('/', handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
 
@@ -397,6 +397,8 @@ async def start_web_server():
 async def main():
     await init_db()
     await start_web_server()
+    # Har safar ishga tushganda eski webhook qoldiqlarini tozalaydi:
+    await bot.delete_webhook(drop_pending_updates=True)
     print("Bot va veb-server muvaffaqiyatli ishga tushdi!")
     await dp.start_polling(bot)
 
