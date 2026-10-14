@@ -8,7 +8,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -264,6 +264,14 @@ class SupportState(StatesGroup):
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                full_name TEXT,
+                username TEXT,
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS answers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -275,7 +283,6 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # Admin reply qilganda o'quvchini aniqlash jadvali
         await db.execute("""
             CREATE TABLE IF NOT EXISTS feedback_map (
                 admin_msg_id INTEGER PRIMARY KEY,
@@ -308,13 +315,15 @@ def get_grade_num_keyboard():
         [InlineKeyboardButton(text="5-sinf", callback_data="num_5"), InlineKeyboardButton(text="6-sinf", callback_data="num_6")],
         [InlineKeyboardButton(text="7-sinf", callback_data="num_7"), InlineKeyboardButton(text="8-sinf", callback_data="num_8")],
         [InlineKeyboardButton(text="9-sinf", callback_data="num_9"), InlineKeyboardButton(text="10-sinf", callback_data="num_10")],
-        [InlineKeyboardButton(text="11-sinf", callback_data="num_11")]
+        [InlineKeyboardButton(text="11-sinf", callback_data="num_11")],
+        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_survey")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_grade_letter_keyboard():
     letters = ["A", "B", "V", "G", "D"]
-    keyboard = [[InlineKeyboardButton(text=l, callback_data=f"let_{l}") for l in letters]]
+    row = [InlineKeyboardButton(text=l, callback_data=f"let_{l}") for l in letters]
+    keyboard = [row, [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_survey")]]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 # ================= BOT INITIALIZATION =================
@@ -324,12 +333,42 @@ bot = Bot(
 )
 dp = Dispatcher()
 
-@dp.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
+# ================= ENG BIRINCHI: BEKOR QILISH HANDLERLARI =================
+@dp.message(F.text == "❌ Bekor qilish")
+async def cancel_any_action(message: Message, state: FSMContext):
     await state.clear()
     is_admin = (message.from_user.id == ADMIN_ID)
     await message.answer(
-        f"Assalomu alaykum, <b>{message.from_user.full_name}</b>!\n\n"
+        "Jarayon bekor qilindi va asosiy menyuga qaytdingiz.",
+        reply_markup=get_main_keyboard(is_admin)
+    )
+
+@dp.callback_query(F.data == "cancel_survey")
+async def cancel_survey_callback(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    is_admin = (callback.from_user.id == ADMIN_ID)
+    await callback.message.delete()
+    await callback.message.answer(
+        "So'rovnoma bekor qilindi va asosiy menyuga qaytdingiz.",
+        reply_markup=get_main_keyboard(is_admin)
+    )
+    await callback.answer()
+
+@dp.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    user = message.from_user
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO users (user_id, full_name, username) VALUES (?, ?, ?)",
+            (user.id, user.full_name, user.username or "")
+        )
+        await db.commit()
+
+    is_admin = (user.id == ADMIN_ID)
+    await message.answer(
+        f"Assalomu alaykum, <b>{user.full_name}</b>!\n\n"
         "🏫 <b>Maktab maslahatchisining rasmiy portaliga xush kelibsiz.</b>\n"
         "Ushbu bot orqali siz o'z qiziqishlaringiz bo'yicha so'rovnomalarda qatnashishingiz, "
         "maktab klublari va kengash faoliyati bilan tanishishingiz hamda "
@@ -351,7 +390,80 @@ async def handle_clubs(message: Message):
 async def handle_council(message: Message):
     await message.answer(COUNCIL_INFO)
 
-# ================= FOYDALANUVCHILAR BILAN YOZISHISH (MUROJAAT) =================
+# ================= ADMIN BUYRUQLARI =================
+@dp.message(F.chat.id == ADMIN_ID, Command("post"))
+async def admin_broadcast_message(message: Message):
+    text = message.text.replace("/post", "", 1).strip()
+    if not text:
+        await message.answer(
+            "⚠️ <b>Matn kiritilmadi!</b>\n"
+            "Foydalanish tartibi:\n"
+            "<code>/post Barcha o'quvchilar diqqatiga! Ertaga tadbir bo'ladi.</code>"
+        )
+        return
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT user_id FROM users") as cursor:
+            users = await cursor.fetchall()
+
+    if not users:
+        await message.answer("Bazada hali hech qanday foydalanuvchi yo'q.")
+        return
+
+    wait_msg = await message.answer(f"⏳ Xabar {len(users)} ta foydalanuvchiga yuborilmoqda...")
+    success = 0
+    failed = 0
+
+    for (uid,) in users:
+        try:
+            await bot.send_message(
+                chat_id=uid,
+                text=f"📢 <b>Maktab maslahatchisidan umumiy e'lon:</b>\n"
+                     f"━━━━━━━━━━━━━━━━━━━━\n"
+                     f"{text}"
+            )
+            success += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+
+    await wait_msg.delete()
+    await message.answer(
+        f"✅ <b>E'lon tarqatildi!</b>\n\n"
+        f"• Muvaffaqiyatli yetib bordi: <b>{success} ta</b>\n"
+        f"• Yetkazilmadi (bloklaganlar): <b>{failed} ta</b>"
+    )
+
+@dp.message(F.chat.id == ADMIN_ID, Command("sms"))
+async def admin_direct_sms(message: Message):
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer(
+            "⚠️ <b>Noto'g'ri format!</b>\n"
+            "Foydalanish tartibi:\n"
+            "<code>/sms 123456789 Xonamga kirib o'tgin</code>"
+        )
+        return
+
+    target_id_str, sms_text = parts[1], parts[2]
+    try:
+        target_id = int(target_id_str)
+    except ValueError:
+        await message.answer("❌ ID raqami faqat sonlardan iborat bo'lishi kerak!")
+        return
+
+    try:
+        await bot.send_message(
+            chat_id=target_id,
+            text=f"👨‍💼 <b>Maktab maslahatchisidan shaxsiy xabar:</b>\n"
+                 f"━━━━━━━━━━━━━━━━━━━━\n"
+                 f"{sms_text}"
+        )
+        await message.answer(f"✅ Xabar <code>{target_id}</code> raqamli o'quvchiga muvaffaqiyatli yetkazildi!")
+    except Exception:
+        await message.answer("❌ Xabarni yuborib bo'lmadi (o'quvchi botni to'xtatgan bo'lishi mumkin).")
+
+# ================= MUROJAAT BO'LIMI =================
 @dp.message(F.text == "✉️ Maslahatchiga murojaat")
 async def ask_counselor_start(message: Message, state: FSMContext):
     await message.answer(
@@ -362,19 +474,12 @@ async def ask_counselor_start(message: Message, state: FSMContext):
     )
     await state.set_state(SupportState.waiting_message)
 
-@dp.message(SupportState.waiting_message, F.text == "❌ Bekor qilish")
-async def cancel_support_message(message: Message, state: FSMContext):
-    await state.clear()
-    is_admin = (message.from_user.id == ADMIN_ID)
-    await message.answer("Murojaat bekor qilindi.", reply_markup=get_main_keyboard(is_admin))
-
 @dp.message(SupportState.waiting_message)
 async def process_user_murojaat(message: Message, state: FSMContext):
     u_name = message.from_user.full_name
     u_id = message.from_user.id
     u_text = message.text
 
-    # Xabarni maslahatchi (Admin)ga yuborish
     try:
         admin_forward = await bot.send_message(
             chat_id=ADMIN_ID,
@@ -382,10 +487,9 @@ async def process_user_murojaat(message: Message, state: FSMContext):
                  f"👤 <b>Foydalanuvchi:</b> {u_name} (ID: <code>{u_id}</code>)\n"
                  f"━━━━━━━━━━━━━━━━━━━━\n"
                  f"💬 <b>Xabar matni:</b>\n{u_text}\n\n"
-                 f"<i>Ushbu xabarga javob berish uchun Telegram'ning 'Ответить' (Reply) tugmasidan foydalaning.</i>"
+                 f"<i>Ushbu xabarga Telegram'ning 'Ответить' (Reply) tugmasi bilan javob bering yoki <code>/sms {u_id} Javobingiz</code> qiling.</i>"
         )
 
-        # Qaysi xabar qaysi foydalanuvchiga tegishli ekanini bazada eslab qolish
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute(
                 "INSERT INTO feedback_map (admin_msg_id, user_id, user_name) VALUES (?, ?, ?)",
@@ -399,12 +503,12 @@ async def process_user_murojaat(message: Message, state: FSMContext):
             "Tez orada bot orqali sizga javob qaytariladi.",
             reply_markup=get_main_keyboard(is_admin)
         )
-    except Exception as e:
+    except Exception:
         await message.answer("Xabarni yuborishda xatolik yuz berdi. Keyinroq urinib ko'ring.")
     
     await state.clear()
 
-# ================= ADMIN REPLY ORQALI JAVOB QAYTARISH =================
+# ================= ADMIN REPLY JAVOB =================
 @dp.message(F.chat.id == ADMIN_ID, F.reply_to_message)
 async def admin_reply_to_user(message: Message):
     replied_id = message.reply_to_message.message_id
@@ -425,17 +529,15 @@ async def admin_reply_to_user(message: Message):
             await message.reply(f"✅ Javobingiz <b>{target_name}</b>ga muvaffaqiyatli yuborildi!")
         except Exception:
             await message.reply("❌ Javobni yuborib bo'lmadi (foydalanuvchi botni bloklagan bo'lishi mumkin).")
-    else:
-        # Agar admin boshqa ixtiyoriy xabarga reply qilgan bo'lsa
-        pass
 
-# ================= SO'ROVNOMA ZANJIRI =================
+# ================= SO'ROVNOMA BOSQICHLARI =================
 @dp.message(F.text == "📝 So'rovnomani to'ldirish")
 async def start_survey(message: Message, state: FSMContext):
     await message.answer(
         "📝 <b>So'rovnomani to'ldirish uchun avval Ism va Familiyangizni kiriting:</b>\n"
-        "<i>(Masalan: Karimov Jasur)</i>",
-        reply_markup=ReplyKeyboardRemove()
+        "<i>(Masalan: Karimov Jasur)</i>\n\n"
+        "<i>Jarayonni to'xtatmoqchi bo'lsangiz, '❌ Bekor qilish' tugmasini bosing.</i>",
+        reply_markup=get_cancel_keyboard()
     )
     await state.set_state(SurveyState.waiting_fio)
 
@@ -511,13 +613,14 @@ async def send_next_question(message: Message, state: FSMContext, is_first: bool
         for opt in q_data["options"]:
             cb_data = f"ans_{opt[:25]}"
             keyboard.append([InlineKeyboardButton(text=opt, callback_data=cb_data)])
+        keyboard.append([InlineKeyboardButton(text="❌ So'rovnomani to'xtatish", callback_data="cancel_survey")])
         
         reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
         await message.answer(full_text, reply_markup=reply_markup)
         await state.set_state(SurveyState.answering)
     else:
-        full_text += "\n\n✍️ <i>Javobingizni xabar sifatida yozib yuboring:</i>"
-        await message.answer(full_text)
+        full_text += "\n\n✍️ <i>Javobingizni xabar sifatida yozib yuboring (yoki pastdagi tugma orqali to'xtating):</i>"
+        await message.answer(full_text, reply_markup=get_cancel_keyboard())
         await state.set_state(SurveyState.answering)
 
 @dp.callback_query(SurveyState.answering, F.data.startswith("ans_"))
@@ -610,7 +713,8 @@ async def generate_excel_report(message: Message):
             for idx, (u_id, fio) in enumerate(students, start=1):
                 row = {
                     "T/r": idx,
-                    "O'quvchining F.I.SH": fio
+                    "O'quvchining F.I.SH": fio,
+                    "Telegram ID": u_id
                 }
                 st_answers = grade_data[(grade_data["user_id"] == u_id) & (grade_data["full_name"] == fio)]
                 for q in questions:
@@ -652,7 +756,7 @@ async def generate_excel_report(message: Message):
                     if is_zebra:
                         cell.fill = zebra_fill
                     
-                    if col_idx == 1:
+                    if col_idx in [1, 3]:
                         cell.alignment = Alignment(horizontal="center", vertical="center")
                     elif col_idx == 2:
                         cell.alignment = Alignment(horizontal="left", vertical="center")
@@ -665,6 +769,8 @@ async def generate_excel_report(message: Message):
                     worksheet.column_dimensions[col_letter].width = 8
                 elif col[0].column == 2:
                     worksheet.column_dimensions[col_letter].width = 30
+                elif col[0].column == 3:
+                    worksheet.column_dimensions[col_letter].width = 16
                 else:
                     worksheet.column_dimensions[col_letter].width = 32
 
@@ -672,7 +778,8 @@ async def generate_excel_report(message: Message):
     doc = FSInputFile(file_path)
     await message.answer_document(
         doc,
-        caption="📊 <b>Maktab so'rovnomalari bo'yicha shakllantirilgan Excel hisoboti</b>"
+        caption="📊 <b>Maktab so'rovnomalari bo'yicha shakllantirilgan Excel hisoboti</b>\n"
+                "<i>(Har bir o'quvchining shaxsiy Telegram ID raqami ham kiritilgan)</i>"
     )
 
     if os.path.exists(file_path):
@@ -698,20 +805,6 @@ async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     print("Bot va veb-server muvaffaqiyatli ishga tushdi!")
     await dp.start_polling(bot)
-    # ================= SO'ROVNOMANI BEKOR QILISH =================
-@dp.message(F.text == "❌ Bekor qilish")
-async def cancel_any_action(message: Message, state: FSMContext):
-    await state.clear()
-    is_admin = (message.from_user.id == ADMIN_ID)
-    await message.answer("Jarayon bekor qilindi.", reply_markup=get_main_keyboard(is_admin))
-
-@dp.callback_query(F.data == "cancel_survey")
-async def cancel_survey_callback(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    is_admin = (callback.from_user.id == ADMIN_ID)
-    await callback.message.delete()
-    await callback.message.answer("So'rovnoma bekor qilindi.", reply_markup=get_main_keyboard(is_admin))
-    await callback.answer()
 
 if __name__ == "__main__":
     asyncio.run(main())
