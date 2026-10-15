@@ -73,7 +73,6 @@ from aiogram import (
     Router,
 )
 from aiogram.exceptions import (
-    SkipHandler,
     TelegramAPIError,
     TelegramBadRequest,
     TelegramForbiddenError,
@@ -120,7 +119,6 @@ def load_settings() -> Settings:
     if not token:
         raise RuntimeError("BOT_TOKEN muhit o'zgaruvchisi o'rnatilmagan.")
 
-    # ADMIN_ID (eski nom) ham qabul qilinadi
     admin_ids = _parse_ids(os.getenv("ADMIN_IDS") or os.getenv("ADMIN_ID", ""))
     if not admin_ids:
         raise RuntimeError("ADMIN_IDS muhit o'zgaruvchisi o'rnatilmagan.")
@@ -348,7 +346,7 @@ def parse_survey_text(raw: str) -> tuple[str, list[int], list[Question], list[st
     questions: list[Question] = []
     errors: list[str] = []
     current: Question | None = None
-    explicit_text = False  # joriy savolda [yozma] belgisi bormi
+    explicit_text = False
 
     def close_current() -> None:
         nonlocal current, explicit_text
@@ -491,11 +489,11 @@ class Database:
         self._conn = conn
         self._write_lock = asyncio.Lock()
 
-    # ---------- hayot sikli ----------
     @classmethod
     async def connect(cls, path: str) -> "Database":
         folder = os.path.dirname(os.path.abspath(path))
-        os.makedirs(folder, exist_ok=True)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
         conn = await aiosqlite.connect(path)
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA journal_mode=WAL")
@@ -516,7 +514,6 @@ class Database:
             await self._conn.commit()
 
     async def _migrate_legacy(self) -> None:
-        """Eski versiyadagi `custom_surveys` jadvalidagi so'rovnomalarni ko'chirish."""
         async with self._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='custom_surveys'"
         ) as cur:
@@ -532,7 +529,6 @@ class Database:
         logger.info("Eski so'rovnomalar yangi jadvalga ko'chirildi.")
 
     async def _seed_defaults(self) -> None:
-        """Boshlang'ich so'rovnomalar faqat BIR marta qo'shiladi (o'chirilsa qaytmaydi)."""
         async with self._conn.execute(
             "SELECT value FROM meta WHERE key='defaults_seeded'"
         ) as cur:
@@ -559,7 +555,6 @@ class Database:
         async with self._conn.execute(sql, params) as cur:
             return await cur.fetchone()
 
-    # ---------- foydalanuvchilar ----------
     async def upsert_user(self, user_id: int, full_name: str, username: str | None) -> None:
         await self._execute(
             """INSERT INTO users (user_id, full_name, username) VALUES (?,?,?)
@@ -578,10 +573,6 @@ class Database:
     async def mark_blocked(self, user_id: int) -> None:
         await self._execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (user_id,))
 
-    async def user_exists(self, user_id: int) -> bool:
-        return await self._fetchone("SELECT 1 FROM users WHERE user_id = ?", (user_id,)) is not None
-
-    # ---------- so'rovnomalar ----------
     async def list_surveys(self, only_active: bool = False) -> list[Survey]:
         sql = "SELECT * FROM surveys"
         if only_active:
@@ -612,7 +603,6 @@ class Database:
         return int(row["c"]) if row else 0
 
     async def delete_survey(self, survey_id: str) -> bool:
-        """Faqat javoblari yo'q so'rovnomani o'chiradi."""
         async with self._write_lock:
             row = await (await self._conn.execute(
                 "SELECT COUNT(*) FROM submissions WHERE survey_id = ?", (survey_id,)
@@ -624,7 +614,6 @@ class Database:
             return cur.rowcount > 0
 
     async def surveys_for_grade(self, grade: int, user_id: int) -> tuple[list[Survey], bool]:
-        """(hali to'ldirilmagan faol so'rovnomalar, sinf uchun faol so'rovnoma umuman bormi)"""
         active = [s for s in await self.list_surveys(only_active=True) if grade in s.grades]
         rows = await self._fetchall("SELECT survey_id FROM submissions WHERE user_id = ?", (user_id,))
         done = {r["survey_id"] for r in rows}
@@ -634,7 +623,6 @@ class Database:
         row = await self._fetchone("SELECT 1 FROM surveys WHERE is_active = 1 LIMIT 1")
         return row is not None
 
-    # ---------- javoblar ----------
     async def save_submission(
         self,
         survey: Survey,
@@ -643,7 +631,6 @@ class Database:
         grade: str,
         answers: list[str],
     ) -> bool:
-        """Barcha javoblarni bitta tranzaksiyada saqlaydi. Takroriy bo'lsa False."""
         async with self._write_lock:
             try:
                 cur = await self._conn.execute(
@@ -660,11 +647,7 @@ class Database:
             except aiosqlite.IntegrityError:
                 await self._conn.rollback()
                 return False
-            except Exception:
-                await self._conn.rollback()
-                raise
 
-    # ---------- murojaatlar ----------
     async def link_feedback(self, admin_id: int, admin_msg_id: int, user_id: int, user_name: str) -> None:
         await self._execute(
             "INSERT OR REPLACE INTO feedback_map (admin_id, admin_msg_id, user_id, user_name) VALUES (?,?,?,?)",
@@ -678,7 +661,6 @@ class Database:
         )
         return (row["user_id"], row["user_name"] or "") if row else None
 
-    # ---------- statistika va eksport ----------
     async def stats(self) -> dict[str, Any]:
         total = (await self._fetchone("SELECT COUNT(*) AS c FROM users"))["c"]
         blocked = (await self._fetchone("SELECT COUNT(*) AS c FROM users WHERE is_blocked = 1"))["c"]
@@ -698,7 +680,6 @@ class Database:
         }
 
     async def export_data(self) -> list[dict[str, Any]]:
-        """Excel uchun: har bir so'rovnoma bo'yicha javob bergan o'quvchilar."""
         result: list[dict[str, Any]] = []
         for survey in await self.list_surveys():
             subs = await self._fetchall(
@@ -741,7 +722,7 @@ class Database:
 # ====================================================================
 # EXCEL_REPORT
 # ====================================================================
-UZ_TZ = timezone(timedelta(hours=5))  # O'zbekistonda yoz/qish vaqti yo'q
+UZ_TZ = timezone(timedelta(hours=5))
 
 HEADER_FILL = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
 HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
@@ -761,7 +742,6 @@ def _fmt_dt(value: str) -> str:
 
 
 def _set(ws, row: int, col: int, value: Any):
-    """Xavfsiz yozish: '=...' formula sifatida talqin qilinmasin, noqonuniy belgilar olib tashlansin."""
     if isinstance(value, str):
         value = ILLEGAL_CHARACTERS_RE.sub("", value)
     cell = ws.cell(row=row, column=col, value=value)
@@ -834,7 +814,6 @@ def build_report(data: list[dict[str, Any]]) -> bytes:
         ws.freeze_panes = "C2"
         ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(subs) + 1}"
 
-        # Umumiy sahifa: sinflar bo'yicha sonlar
         counts: dict[str, int] = {}
         for s in subs:
             counts[s["grade"]] = counts.get(s["grade"], 0) + 1
@@ -874,7 +853,6 @@ def build_report(data: list[dict[str, Any]]) -> bytes:
 # UTILS
 # ====================================================================
 def esc(text: str | None) -> str:
-    """Foydalanuvchi matnini HTML uchun xavfsiz qilish."""
     return escape(text or "", quote=False)
 
 
@@ -888,7 +866,6 @@ def progress_bar(done: int, total: int, width: int = 10) -> str:
 
 
 def grade_key(grade: str) -> tuple[int, str]:
-    """'10-B' -> (10, 'B') — sinflarni to'g'ri tartiblash uchun."""
     m = re.match(r"(\d+)\s*-?\s*(\w*)", grade)
     return (int(m.group(1)), m.group(2)) if m else (99, grade)
 
@@ -903,7 +880,6 @@ class Btn:
     COUNCIL = "👥 O'quvchilar kengashi"
     COUNSELOR = "👨‍💼 Maktab maslahatchisi"
     CANCEL = "❌ Bekor qilish"
-    # admin (matnlar eski versiya bilan bir xil: eski klaviaturalar ham ishlaydi)
     ADD_SURVEY = "➕ Yangi so'rovnoma qo'shish"
     SURVEYS = "📋 So'rovnomalar"
     STATS = "📈 Statistika"
@@ -954,7 +930,6 @@ def survey_pick_keyboard(surveys: list[Survey]) -> InlineKeyboardMarkup:
 
 
 def question_keyboard(q_idx: int, question: Question) -> InlineKeyboardMarkup:
-    """callback: ans:<savol_indeksi>:<variant_indeksi> (64 bayt limitidan xavfsiz)"""
     rows = [
         [InlineKeyboardButton(text=opt, callback_data=f"ans:{q_idx}:{i}")]
         for i, opt in enumerate(question.options)
@@ -1035,12 +1010,6 @@ logger = logging.getLogger(__name__)
 
 
 class TrackUserMiddleware(BaseMiddleware):
-    """Har bir shaxsiy muloqotdagi foydalanuvchini bazada yangilab turadi.
-
-    Baza tozalansa ham foydalanuvchilar e'lon ro'yxatiga qayta tushadi,
-    botni blokdan chiqargan foydalanuvchi esa avtomatik tiklanadi.
-    """
-
     def __init__(self, db: Database) -> None:
         self.db = db
 
@@ -1055,7 +1024,7 @@ class TrackUserMiddleware(BaseMiddleware):
         if user and not user.is_bot and (chat is None or chat.type == "private"):
             try:
                 await self.db.upsert_user(user.id, user.full_name, user.username)
-            except Exception:  # noqa: BLE001 — kuzatuv xatosi asosiy ishni to'xtatmasin
+            except Exception:
                 logger.exception("Foydalanuvchini yangilashda xatolik")
         return await handler(event, data)
 
@@ -1172,9 +1141,6 @@ async def _safe_edit(message: Message, text: str, reply_markup=None) -> None:
             raise
 
 
-# =====================================================================
-# 1) Yangi so'rovnoma qo'shish
-# =====================================================================
 @admin_router.message(F.text == Btn.ADD_SURVEY)
 @admin_router.message(Command("add_survey"))
 async def add_survey_start(message: Message, state: FSMContext) -> None:
@@ -1193,9 +1159,6 @@ async def add_survey_start(message: Message, state: FSMContext) -> None:
     await state.set_state(AdminState.waiting_survey_text)
 
 
-# =====================================================================
-# 2) So'rovnomalar ro'yxati (yoqish/o'chirish)
-# =====================================================================
 async def _render_survey_list(db: Database):
     surveys = await db.list_surveys()
     if not surveys:
@@ -1269,9 +1232,6 @@ async def cb_delete_ok(cb: CallbackQuery, db: Database) -> None:
     await _safe_edit(cb.message, text, kb)
 
 
-# =====================================================================
-# 3) Statistika
-# =====================================================================
 @admin_router.message(F.text == Btn.STATS)
 @admin_router.message(Command("stats"))
 async def show_stats(message: Message, state: FSMContext, db: Database) -> None:
@@ -1295,9 +1255,6 @@ async def show_stats(message: Message, state: FSMContext, db: Database) -> None:
     await message.answer(text[:4000])
 
 
-# =====================================================================
-# 4) Excel hisobot
-# =====================================================================
 @admin_router.message(F.text == Btn.EXPORT)
 @admin_router.message(Command("export"))
 async def export_excel(message: Message, state: FSMContext, db: Database) -> None:
@@ -1307,7 +1264,7 @@ async def export_excel(message: Message, state: FSMContext, db: Database) -> Non
     if not data:
         await wait.edit_text("Bazada hozircha to'ldirilgan so'rovnomalar mavjud emas.")
         return
-    content = await asyncio.to_thread(build_report, data)  # bot bloklanmasligi uchun
+    content = await asyncio.to_thread(build_report, data)
     filename = f"Sorovnoma_hisoboti_{datetime.now(UZ_TZ):%Y-%m-%d}.xlsx"
     await message.answer_document(
         BufferedInputFile(content, filename=filename),
@@ -1317,16 +1274,13 @@ async def export_excel(message: Message, state: FSMContext, db: Database) -> Non
     await wait.delete()
 
 
-# =====================================================================
-# 5) E'lon yuborish (/post) — oldindan ko'rish va tasdiqlash bilan
-# =====================================================================
 def _announcement(text: str) -> str:
     return f"📢 <b>Maktab maslahatchisidan umumiy e'lon:</b>\n━━━━━━━━━━━━━━━━━━━━\n{text}"
 
 
 @admin_router.message(Command("post"))
 async def post_command(message: Message, state: FSMContext, db: Database) -> None:
-    body = _strip_command(message.html_text)  # Telegram'dagi qalin/kursiv formatlash saqlanadi
+    body = _strip_command(message.html_text)
     if not body:
         await message.answer(
             "⚠️ <b>Matn kiritilmadi!</b>\nFoydalanish:\n"
@@ -1335,7 +1289,7 @@ async def post_command(message: Message, state: FSMContext, db: Database) -> Non
         return
     text = _announcement(body)
     try:
-        await message.answer(text)  # ko'rinishi
+        await message.answer(text)
     except TelegramBadRequest:
         await message.answer("⚠️ Matnni yuborib bo'lmadi (formatlashda xato bor). Soddaroq yozib ko'ring.")
         return
@@ -1394,7 +1348,7 @@ async def broadcast_confirm(cb: CallbackQuery, state: FSMContext, bot: Bot, db: 
     await _safe_edit(cb.message, "⏳ E'lon yuborilmoqda... Tugagach hisobot keladi.")
     await cb.answer()
     task = asyncio.create_task(_run_broadcast(bot, db, settings, text, cb.from_user.id))
-    _background_tasks.add(task)  # GC o'chirib yubormasligi uchun
+    _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
 
@@ -1405,9 +1359,6 @@ async def broadcast_cancel(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.answer()
 
 
-# =====================================================================
-# 6) Bitta foydalanuvchiga xabar (/sms)
-# =====================================================================
 @admin_router.message(Command("sms"))
 async def sms_command(message: Message, bot: Bot, db: Database) -> None:
     parts = _strip_command(message.html_text).split(maxsplit=1)
@@ -1430,14 +1381,11 @@ async def sms_command(message: Message, bot: Bot, db: Database) -> None:
         await message.answer(f"❌ Xabarni yuborib bo'lmadi: {esc(str(e))}")
 
 
-# =====================================================================
-# 7) Murojaatga Reply orqali javob (matn, rasm, ovoz, fayl — hammasi)
-# =====================================================================
 @admin_router.message(F.reply_to_message)
 async def reply_to_user(message: Message, bot: Bot, db: Database) -> None:
     target = await db.get_feedback_target(message.from_user.id, message.reply_to_message.message_id)
     if target is None:
-        raise SkipHandler  # bu murojaat emas — boshqa handlerlarga o'tsin
+        return
     user_id, name = target
     header = "👨‍💼 <b>Maktab maslahatchisidan javob:</b>\n━━━━━━━━━━━━━━━━━━━━"
     try:
@@ -1454,9 +1402,6 @@ async def reply_to_user(message: Message, bot: Bot, db: Database) -> None:
         await message.reply(f"❌ Javobni yuborib bo'lmadi: {esc(str(e))}")
 
 
-# =====================================================================
-# 8) So'rovnoma matnini qabul qilish (holat handlerlari oxirida)
-# =====================================================================
 @admin_router.message(AdminState.waiting_survey_text, F.text)
 async def save_survey(message: Message, state: FSMContext, db: Database, settings: Settings) -> None:
     title, grades, questions, errors = parse_survey_text(message.text)
@@ -1473,8 +1418,7 @@ async def save_survey(message: Message, state: FSMContext, db: Database, setting
         f"📌 <b>Nomi:</b> {esc(title)}\n"
         f"👥 <b>Sinflar:</b> {', '.join(map(str, grades))}\n"
         f"❓ <b>Savollar soni:</b> {len(questions)} ta\n\n"
-        "O'quvchilar so'rovnomani to'ldirishda sinfiga mos so'rovnomani ko'radi. "
-        "Bir sinfga bir nechta so'rovnoma tegishli bo'lsa, tanlash taklif etiladi.",
+        "O'quvchilar so'rovnomani to'ldirishda sinfiga mos so'rovnomani ko'radi.",
         reply_markup=main_keyboard(True),
     )
 
@@ -1495,7 +1439,6 @@ survey_router.message.filter(F.chat.type == "private")
 MAX_TEXT_ANSWER = 1000
 
 
-# ---------------- yordamchi funksiyalar ----------------
 def _valid_fio(fio: str) -> bool:
     return 5 <= len(fio) <= 80 and len(fio.split()) >= 2 and not any(ch.isdigit() for ch in fio)
 
@@ -1548,7 +1491,6 @@ async def _advance(bot: Bot, db: Database, settings: Settings, state: FSMContext
         await bot.send_message(user_id, "Siz bu so'rovnomani allaqachon to'ldirgansiz.", reply_markup=keyboard)
 
 
-# ---------------- F.I.SH ----------------
 @survey_router.message(SurveyState.waiting_fio, F.text)
 async def process_fio(message: Message, state: FSMContext) -> None:
     fio = " ".join(message.text.split())
@@ -1562,7 +1504,6 @@ async def process_fio(message: Message, state: FSMContext) -> None:
     await message.answer(f"Rahmat, <b>{esc(fio)}</b>!\nEndi sinfingizni tanlang:", reply_markup=grade_num_keyboard())
 
 
-# ---------------- sinf ----------------
 @survey_router.callback_query(SurveyState.waiting_grade_num, F.data.startswith("num:"))
 async def process_grade_num(cb: CallbackQuery, state: FSMContext, settings: Settings) -> None:
     grade_num = int(cb.data.split(":")[1])
@@ -1637,7 +1578,6 @@ async def process_pick(cb: CallbackQuery, state: FSMContext, bot: Bot, db: Datab
     await cb.answer()
 
 
-# ---------------- savollarga javob ----------------
 @survey_router.callback_query(SurveyState.answering, F.data.startswith("ans:"))
 async def handle_choice(cb: CallbackQuery, state: FSMContext, bot: Bot, db: Database, settings: Settings) -> None:
     try:
@@ -1663,7 +1603,7 @@ async def handle_choice(cb: CallbackQuery, state: FSMContext, bot: Bot, db: Data
         return
 
     answer = question.options[opt_pos]
-    try:  # tanlangan javobni xabarda qoldirib, tugmalarni olib tashlaymiz
+    try:
         await cb.message.edit_text(f"<b>{esc(question.text)}</b>\n\n✅ {esc(answer)}", reply_markup=None)
     except TelegramBadRequest:
         pass
@@ -1692,7 +1632,6 @@ async def handle_text(message: Message, state: FSMContext, bot: Bot, db: Databas
     await _advance(bot, db, settings, state, message.from_user.id, answer)
 
 
-# ---------------- noto'g'ri turdagi kiritish ----------------
 @survey_router.message(StateFilter(SurveyState.waiting_fio, SurveyState.answering))
 async def expect_text(message: Message) -> None:
     await message.answer("⚠️ Iltimos, javobni oddiy matn ko'rinishida yuboring.")
@@ -1822,12 +1761,12 @@ async def on_error(event: ErrorEvent, bot: Bot) -> bool:
         chat_id = update.callback_query.from_user.id
         try:
             await update.callback_query.answer()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     if chat_id:
         try:
             await bot.send_message(chat_id, "⚠️ Kutilmagan xatolik yuz berdi. Iltimos, /start ni bosib qayta urinib ko'ring.")
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     return True
 
@@ -1843,7 +1782,7 @@ async def main() -> None:
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(
         storage=MemoryStorage(),
-        events_isolation=SimpleEventIsolation(),  # bir foydalanuvchining hodisalari ketma-ket ishlanadi
+        events_isolation=SimpleEventIsolation(),
         db=db,
         settings=settings,
     )
@@ -1852,7 +1791,6 @@ async def main() -> None:
     dp.message.outer_middleware(tracker)
     dp.callback_query.outer_middleware(tracker)
 
-    # Tartib muhim: menyu -> admin -> holat handlerlari -> fallback
     dp.include_routers(menu_router, admin_router, survey_router, support_router, fallback_router)
     dp.errors.register(on_error)
 
@@ -1862,7 +1800,7 @@ async def main() -> None:
         for admin_id in settings.admin_ids:
             try:
                 await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=admin_id))
-            except Exception:  # noqa: BLE001 — admin hali botni ishga tushirmagan bo'lishi mumkin
+            except Exception:
                 logger.warning("Admin (%s) uchun buyruqlar o'rnatilmadi", admin_id)
 
         await bot.delete_webhook(drop_pending_updates=False)
