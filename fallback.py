@@ -6,8 +6,8 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from ..config import Settings
-from ..keyboards import main_keyboard
+from config import Settings
+from keyboards import main_keyboard
 
 router = Router(name="fallback")
 

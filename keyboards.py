@@ -8,7 +8,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-from .models import Question, Survey
+from models import Question, Survey
 
 
 class Btn:

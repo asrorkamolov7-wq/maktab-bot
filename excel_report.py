@@ -11,8 +11,8 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from .models import Survey
-from .utils import grade_key
+from models import Survey
+from utils import grade_key
 
 UZ_TZ = timezone(timedelta(hours=5))  # O'zbekistonda yoz/qish vaqti yo'q
 

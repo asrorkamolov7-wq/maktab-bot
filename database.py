@@ -9,8 +9,8 @@ from typing import Any
 
 import aiosqlite
 
-from .models import Question, Survey
-from .texts import DEFAULT_SURVEYS
+from models import Question, Survey
+from texts import DEFAULT_SURVEYS
 
 logger = logging.getLogger(__name__)
 

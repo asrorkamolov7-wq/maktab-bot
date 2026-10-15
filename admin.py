@@ -19,11 +19,11 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from ..config import Settings
-from ..database import Database
-from ..excel_report import UZ_TZ, build_report
-from ..filters import IsAdmin
-from ..keyboards import (
+from config import Settings
+from database import Database
+from excel_report import UZ_TZ, build_report
+from filters import IsAdmin
+from keyboards import (
     Btn,
     broadcast_confirm_keyboard,
     cancel_keyboard,
@@ -31,10 +31,10 @@ from ..keyboards import (
     main_keyboard,
     surveys_admin_keyboard,
 )
-from ..states import AdminState
-from ..survey_parser import parse_survey_text
-from ..texts import SURVEY_TEMPLATE
-from ..utils import esc, grade_key
+from states import AdminState
+from survey_parser import parse_survey_text
+from texts import SURVEY_TEMPLATE
+from utils import esc, grade_key
 
 logger = logging.getLogger(__name__)
 

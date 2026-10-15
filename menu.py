@@ -8,12 +8,12 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from ..config import Settings
-from ..database import Database
-from ..keyboards import Btn, cancel_keyboard, main_keyboard
-from ..states import SupportState, SurveyState
-from ..texts import ABOUT_COUNSELOR, CLUBS_INFO, COUNCIL_INFO, WELCOME
-from ..utils import esc
+from config import Settings
+from database import Database
+from keyboards import Btn, cancel_keyboard, main_keyboard
+from states import SupportState, SurveyState
+from texts import ABOUT_COUNSELOR, CLUBS_INFO, COUNCIL_INFO, WELCOME
+from utils import esc
 
 router = Router(name="menu")
 router.message.filter(F.chat.type == "private")

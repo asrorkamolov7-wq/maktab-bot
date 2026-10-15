@@ -9,11 +9,15 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage, SimpleEventIsolation
 from aiogram.types import BotCommand, BotCommandScopeChat, ErrorEvent
 
-from .config import load_settings
-from .database import Database
-from .handlers import admin, fallback, menu, support, survey
-from .middlewares import TrackUserMiddleware
-from .web import start_web_server
+from config import load_settings
+from database import Database
+import admin
+import fallback
+import menu
+import support
+import survey
+from middlewares import TrackUserMiddleware
+from web import start_web_server
 
 logger = logging.getLogger(__name__)
 
@@ -98,3 +102,7 @@ def run() -> None:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Bot to'xtatildi.")
+
+
+if __name__ == "__main__":
+    run()

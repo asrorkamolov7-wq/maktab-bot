@@ -6,7 +6,7 @@ from typing import Any, Awaitable, Callable
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 
-from .database import Database
+from database import Database
 
 logger = logging.getLogger(__name__)
 

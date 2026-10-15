@@ -3,7 +3,7 @@ from __future__ import annotations
 from aiogram.filters import BaseFilter
 from aiogram.types import CallbackQuery, Message
 
-from .config import Settings
+from config import Settings
 
 
 class IsAdmin(BaseFilter):

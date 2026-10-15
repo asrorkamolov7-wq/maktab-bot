@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from .models import Question
+from models import Question
 
 MAX_QUESTIONS = 50
 MAX_OPTIONS = 12
