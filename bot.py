@@ -1,5 +1,7 @@
 import asyncio
+import json
 import os
+import re
 import aiosqlite
 import pandas as pd
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -16,7 +18,6 @@ from aiogram.types import (
     CallbackQuery,
     ReplyKeyboardMarkup,
     KeyboardButton,
-    ReplyKeyboardRemove,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     FSInputFile
@@ -90,83 +91,28 @@ O'quvchilar tashabbuslarini qo'llab-quvvatlash, ijtimoiy loyihalar va volontyorl
 ☘️ <b>Klublar:</b> Maktabda faoliyat yurituvchi tarmoq to'garaklari.
 """
 
-# ================= SO'ROVNOMALAR RO'YXATI =================
-SURVEYS = [
+# ================= BOSHLANG'ICH SO'ROVNOMALAR =================
+DEFAULT_SURVEYS = [
     {
         "id": "survey_5_8",
         "title": "«Mening qiziqishlarim va kelajakdagi kasbim» (5–8-sinf)",
         "grades": [5, 6, 7, 8],
         "questions": [
-            {
-                "type": "choice",
-                "question": "1. Maktabda qaysi fanlarni o'rganish sizga ko'proq yoqadi?",
-                "options": ["Matematika", "Ona tili va adabiyot", "Tarix", "Chet tili", "Informatika", "Biologiya", "Fizika", "Jismoniy tarbiya", "Musiqa / Tasviriy san'at"]
-            },
-            {
-                "type": "choice",
-                "question": "2. Bo'sh vaqtingizda nimalar bilan shug'ullanishni yoqtirasiz?",
-                "options": ["Kitob o'qish", "Sport", "Rasm chizish", "Kompyuter va IT", "Video / montaj / dizayn", "Qo'shiq / cholg'u", "Pazandachilik / hunar"]
-            },
-            {
-                "type": "choice",
-                "question": "3. O'zingizda qaysi qobiliyat kuchliroq deb o'ylaysiz?",
-                "options": ["Hisoblash va mantiq", "Chiroyli gapirish", "Texnika va kompyuter", "Musiqa va ijod", "Sport", "Tashkilotchilik", "Tinglash va yordam berish", "Hali bilmayman"]
-            },
-            {
-                "type": "choice",
-                "question": "4. Yangi narsani o'rganishda qaysi usul sizga ko'proq yoqadi?",
-                "options": ["O'qib o'rganish", "Amalda bajarib ko'rish", "Video orqali ko'rish", "Ustozdan so'rab", "Do'stlar bilan birgalikda", "Tajriba qilib ko'rish"]
-            },
-            {
-                "type": "choice",
-                "question": "5. Quyidagi faoliyatlardan qaysi biri sizga eng qiziq?",
-                "options": ["Kompyuter / IT", "Tibbiyot", "Texnika va muhandislik", "San'at va ijod", "Sport", "Ta'lim va pedagogika", "Biznes va tadbirkorlik", "Huquq / Harbiy"]
-            },
-            {
-                "type": "text",
-                "question": "6. Kelajakda qaysi kasb yoki kasblarga qiziqasiz? Nomlarini yozing:"
-            },
-            {
-                "type": "choice",
-                "question": "7. Bu kasbga qiziqishingizga nima sabab bo'lgan?",
-                "options": ["Bu kasb menga yoqadi", "Tanishim shu sohada ishlaydi", "Bolalikdagi orzuim", "Daromadi yaxshi", "Odamlarga yordam berish", "Hali aniq bilmayman"]
-            },
-            {
-                "type": "choice",
-                "question": "8. Siz ko'proq qanday ishni bajarishni xohlaysiz?",
-                "options": ["Odamlar bilan ishlash", "Kompyuter bilan ishlash", "Texnika va qurilmalar", "Hayvonlar va tabiat", "Ijodiy ishlar", "Jamoa bilan ishlash", "Mustaqil ishlash"]
-            },
-            {
-                "type": "choice",
-                "question": "9. Qaysi to'garak yoki klub sizni ko'proq qiziqtiradi?",
-                "options": ["Turon teatr", "Iqtidor ansambli", "Jadidlar izidan", "Eco-schools Uzbekistan", "Xorijiy tillar", "Debat klubi", "Raqamli avlod qizlari"]
-            },
-            {
-                "type": "text",
-                "question": "10. Maktabda yangi to'garak ochilsa, qaysi yo'nalishda bo'lishini xohlardingiz?"
-            },
-            {
-                "type": "choice",
-                "question": "11. O'zingizni kelajakda qanday inson sifatida tasavvur qilasiz?",
-                "options": ["Yaxshi mutaxassis", "Tadbirkor", "Olim / Tadqiqotchi", "Ijodkor", "Sportchi", "Rahbar", "O'qituvchi"]
-            },
-            {
-                "type": "choice",
-                "question": "12. Sizga kasb tanlashda kimning maslahati ko'proq ta'sir qiladi?",
-                "options": ["Ota-onam", "O'qituvchim", "Sinfdoshlarim / do'stlarim", "Maktab maslahatchisi", "O'zim mustaqil tanlayman"]
-            },
-            {
-                "type": "text",
-                "question": "13. Kelajakdagi qaysi kasb haqida ko'proq ma'lumot olishni xohlaysiz?"
-            },
-            {
-                "type": "text",
-                "question": "14. Siz maktab hayotini yaxshilash uchun qanday yangi taklif bera olasiz?"
-            },
-            {
-                "type": "text",
-                "question": "15. O'zingiz haqingizda biz bilishimiz kerak bo'lgan boshqa qiziqishingiz bormi?"
-            }
+            {"type": "choice", "question": "1. Maktabda qaysi fanlarni o'rganish sizga ko'proq yoqadi?", "options": ["Matematika", "Ona tili va adabiyot", "Tarix", "Chet tili", "Informatika", "Biologiya", "Fizika", "Jismoniy tarbiya", "Musiqa / Tasviriy san'at"]},
+            {"type": "choice", "question": "2. Bo'sh vaqtingizda nimalar bilan shug'ullanishni yoqtirasiz?", "options": ["Kitob o'qish", "Sport", "Rasm chizish", "Kompyuter va IT", "Video / montaj / dizayn", "Qo'shiq / cholg'u", "Pazandachilik / hunar"]},
+            {"type": "choice", "question": "3. O'zingizda qaysi qobiliyat kuchliroq deb o'ylaysiz?", "options": ["Hisoblash va mantiq", "Chiroyli gapirish", "Texnika va kompyuter", "Musiqa va ijod", "Sport", "Tashkilotchilik", "Tinglash va yordam berish", "Hali bilmayman"]},
+            {"type": "choice", "question": "4. Yangi narsani o'rganishda qaysi usul sizga ko'proq yoqadi?", "options": ["O'qib o'rganish", "Amalda bajarib ko'rish", "Video orqali ko'rish", "Ustozdan so'rab", "Do'stlar bilan birgalikda", "Tajriba qilib ko'rish"]},
+            {"type": "choice", "question": "5. Quyidagi faoliyatlardan qaysi biri sizga eng qiziq?", "options": ["Kompyuter / IT", "Tibbiyot", "Texnika va muhandislik", "San'at va ijod", "Sport", "Ta'lim va pedagogika", "Biznes va tadbirkorlik", "Huquq / Harbiy"]},
+            {"type": "text", "question": "6. Kelajakda qaysi kasb yoki kasblarga qiziqasiz? Nomlarini yozing:"},
+            {"type": "choice", "question": "7. Bu kasbga qiziqishingizga nima sabab bo'lgan?", "options": ["Bu kasb menga yoqadi", "Tanishim shu sohada ishlaydi", "Bolalikdagi orzuim", "Daromadi yaxshi", "Odamlarga yordam berish", "Hali aniq bilmayman"]},
+            {"type": "choice", "question": "8. Siz ko'proq qanday ishni bajarishni xohlaysiz?", "options": ["Odamlar bilan ishlash", "Kompyuter bilan ishlash", "Texnika va qurilmalar", "Hayvonlar va tabiat", "Ijodiy ishlar", "Jamoa bilan ishlash", "Mustaqil ishlash"]},
+            {"type": "choice", "question": "9. Qaysi to'garak yoki klub sizni ko'proq qiziqtiradi?", "options": ["Turon teatr", "Iqtidor ansambli", "Jadidlar izidan", "Eco-schools Uzbekistan", "Xorijiy tillar", "Debat klubi", "Raqamli avlod qizlari"]},
+            {"type": "text", "question": "10. Maktabda yangi to'garak ochilsa, qaysi yo'nalishda bo'lishini xohlardingiz?"},
+            {"type": "choice", "question": "11. O'zingizni kelajakda qanday inson sifatida tasavvur qilasiz?", "options": ["Yaxshi mutaxassis", "Tadbirkor", "Olim / Tadqiqotchi", "Ijodkor", "Sportchi", "Rahbar", "O'qituvchi"]},
+            {"type": "choice", "question": "12. Sizga kasb tanlashda kimning maslahati ko'proq ta'sir qiladi?", "options": ["Ota-onam", "O'qituvchim", "Sinfdoshlarim / do'stlarim", "Maktab maslahatchisi", "O'zim mustaqil tanlayman"]},
+            {"type": "text", "question": "13. Kelajakdagi qaysi kasb haqida ko'proq ma'lumot olishni xohlaysiz?"},
+            {"type": "text", "question": "14. Siz maktab hayotini yaxshilash uchun qanday yangi taklif bera olasiz?"},
+            {"type": "text", "question": "15. O'zingiz haqingizda biz bilishimiz kerak bo'lgan boshqa qiziqishingiz bormi?"}
         ]
     },
     {
@@ -174,78 +120,21 @@ SURVEYS = [
         "title": "«Kasb tanlash va oliygohga tayyorgarlik» (9–11-sinf)",
         "grades": [9, 10, 11],
         "questions": [
-            {
-                "type": "choice",
-                "question": "1. Kelajakda qaysi kasb egasi bo'lishni xohlaysiz?",
-                "options": ["Tibbiyot", "Muhandislik / Arxitektura", "IT sohasi", "Iqtisodiyot / Biznes", "Ta'lim / Pedagogika", "Huquqshunoslik", "Harbiy soha", "Boshqa"]
-            },
-            {
-                "type": "choice",
-                "question": "2. Sizni qaysi fanlar ko'proq qiziqtiradi?",
-                "options": ["Matematika", "Fizika", "Kimyo / Biologiya", "Ingliz tili / Chet tillari", "Tarix va huquq", "Ona tili va adabiyot"]
-            },
-            {
-                "type": "choice",
-                "question": "3. Maktabni tugatgach o'qishni davom ettirishni rejalashtiryapsizmi?",
-                "options": ["Ha, albatta", "Yo'q", "Hali aniq emas"]
-            },
-            {
-                "type": "choice",
-                "question": "4. Qayerda o'qishni xohlaysiz?",
-                "options": ["O'zbekiston oliy ta'lim muassasalarida", "Xorijiy davlat universitetlarida", "Ikkalasini ham ko'rib chiqyapman"]
-            },
-            {
-                "type": "choice",
-                "question": "5. Qaysi davlat universitetlarida o'qish sizni qiziqtiradi?",
-                "options": ["O'zbekiston", "AQSh", "Buyuk Britaniya", "Koreya", "Turkiya", "Yevropa davlatlari", "Rossiya"]
-            },
-            {
-                "type": "choice",
-                "question": "6. Xorijiy universitetlarga hujjat topshirishni rejalashtiryapsizmi?",
-                "options": ["Ha", "Yo'q", "Hali o'ylab ko'ryapman"]
-            },
-            {
-                "type": "choice",
-                "question": "7. Qaysi xalqaro test yoki sertifikatlarga tayyorlanyapsiz?",
-                "options": ["IELTS", "SAT", "CEFR", "TOEFL", "Hali boshlamaganman"]
-            },
-            {
-                "type": "choice",
-                "question": "8. Ingliz tilini bilish darajangiz qanday?",
-                "options": ["Boshlang'ich", "O'rta", "Yaxshi (B2 daraja)", "Juda yaxshi (C1 daraja)"]
-            },
-            {
-                "type": "text",
-                "question": "9. Hozirda qaysi to'garak yoki o'quv markazlariga qatnashyapsiz?"
-            },
-            {
-                "type": "choice",
-                "question": "10. Siz qaysi sohada o'zingizni rivojlantirishni xohlaysiz?",
-                "options": ["Akademik bilimlar", "Liderlik ko'nikmalari", "Ilmiy izlanish", "Sport", "Ijodiy yo'nalishlar"]
-            },
-            {
-                "type": "choice",
-                "question": "11. Universitetga kirish uchun sizga birinchi navbatda qanday yordam kerak?",
-                "options": ["Testlarga tayyorgarlik", "Universitet tanlashda maslahat", "Hujjat topshirish tartibi", "Grant imkoniyatlari"]
-            },
-            {
-                "type": "text",
-                "question": "12. Kelajakdagi asosiy maqsadingiz nima? Qisqacha yozing:"
-            },
-            {
-                "type": "choice",
-                "question": "13. Agar chet elda o'qish imkoniyati yaratilsa, undan foydalanishga tayyormisiz?",
-                "options": ["Ha, albatta", "Ehtimol", "Yo'q"]
-            },
-            {
-                "type": "choice",
-                "question": "14. Maktab maslahatchisi bilan suhbatlashishni xohlaysizmi?",
-                "options": ["Ha, suhbatlashmoqchiman", "Hozircha yo'q"]
-            },
-            {
-                "type": "text",
-                "question": "15. Maktab hayotini yaxshilash uchun qanday taklifingiz bor?"
-            }
+            {"type": "choice", "question": "1. Kelajakda qaysi kasb egasi bo'lishni xohlaysiz?", "options": ["Tibbiyot", "Muhandislik / Arxitektura", "IT sohasi", "Iqtisodiyot / Biznes", "Ta'lim / Pedagogika", "Huquqshunoslik", "Harbiy soha", "Boshqa"]},
+            {"type": "choice", "question": "2. Sizni qaysi fanlar ko'proq qiziqtiradi?", "options": ["Matematika", "Fizika", "Kimyo / Biologiya", "Ingliz tili / Chet tillari", "Tarix va huquq", "Ona tili va adabiyot"]},
+            {"type": "choice", "question": "3. Maktabni tugatgach o'qishni davom ettirishni rejalashtiryapsizmi?", "options": ["Ha, albatta", "Yo'q", "Hali aniq emas"]},
+            {"type": "choice", "question": "4. Qayerda o'qishni xohlaysiz?", "options": ["O'zbekiston oliy ta'lim muassasalarida", "Xorijiy davlat universitetlarida", "Ikkalasini ham ko'rib chiqyapman"]},
+            {"type": "choice", "question": "5. Qaysi davlat universitetlarida o'qish sizni qiziqtiradi?", "options": ["O'zbekiston", "AQSh", "Buyuk Britaniya", "Koreya", "Turkiya", "Yevropa davlatlari", "Rossiya"]},
+            {"type": "choice", "question": "6. Xorijiy universitetlarga hujjat topshirishni rejalashtiryapsizmi?", "options": ["Ha", "Yo'q", "Hali o'ylab ko'ryapman"]},
+            {"type": "choice", "question": "7. Qaysi xalqaro test yoki sertifikatlarga tayyorlanyapsiz?", "options": ["IELTS", "SAT", "CEFR", "TOEFL", "Hali boshlamaganman"]},
+            {"type": "choice", "question": "8. Ingliz tilini bilish darajangiz qanday?", "options": ["Boshlang'ich", "O'rta", "Yaxshi (B2 daraja)", "Juda yaxshi (C1 daraja)"]},
+            {"type": "text", "question": "9. Hozirda qaysi to'garak yoki o'quv markazlariga qatnashyapsiz?"},
+            {"type": "choice", "question": "10. Siz qaysi sohada o'zingizni rivojlantirishni xohlaysiz?", "options": ["Akademik bilimlar", "Liderlik ko'nikmalari", "Ilmiy izlanish", "Sport", "Ijodiy yo'nalishlar"]},
+            {"type": "choice", "question": "11. Universitetga kirish uchun sizga birinchi navbatda qanday yordam kerak?", "options": ["Testlarga tayyorgarlik", "Universitet tanlashda maslahat", "Hujjat topshirish tartibi", "Grant imkoniyatlari"]},
+            {"type": "text", "question": "12. Kelajakdagi asosiy maqsadingiz nima? Qisqacha yozing:"},
+            {"type": "choice", "question": "13. Agar chet elda o'qish imkoniyati yaratilsa, undan foydalanishga tayyormisiz?", "options": ["Ha, albatta", "Ehtimol", "Yo'q"]},
+            {"type": "choice", "question": "14. Maktab maslahatchisi bilan suhbatlashishni xohlaysizmi?", "options": ["Ha, suhbatlashmoqchiman", "Hozircha yo'q"]},
+            {"type": "text", "question": "15. Maktab hayotini yaxshilash uchun qanday taklifingiz bor?"}
         ]
     }
 ]
@@ -259,6 +148,9 @@ class SurveyState(StatesGroup):
 
 class SupportState(StatesGroup):
     waiting_message = State()
+
+class AdminAddSurveyState(StatesGroup):
+    waiting_raw_text = State()
 
 # ================= BAZA ISHGA TUSHIRISH =================
 async def init_db():
@@ -290,7 +182,37 @@ async def init_db():
                 user_name TEXT
             )
         """)
+        # Dinamik so'rovnomalar jadvali
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS custom_surveys (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                grades_json TEXT,
+                questions_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # Boshlang'ich so'rovnomalarni bazaga yozish (agar hali yo'q bo'lsa)
+        for s in DEFAULT_SURVEYS:
+            await db.execute("""
+                INSERT OR IGNORE INTO custom_surveys (id, title, grades_json, questions_json)
+                VALUES (?, ?, ?, ?)
+            """, (s["id"], s["title"], json.dumps(s["grades"]), json.dumps(s["questions"], ensure_ascii=False)))
         await db.commit()
+
+async def get_all_surveys():
+    surveys = []
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT id, title, grades_json, questions_json FROM custom_surveys") as cursor:
+            rows = await cursor.fetchall()
+            for r in rows:
+                surveys.append({
+                    "id": r[0],
+                    "title": r[1],
+                    "grades": json.loads(r[2]),
+                    "questions": json.loads(r[3])
+                })
+    return surveys
 
 # ================= TUGMALAR =================
 def get_main_keyboard(is_admin: bool = False):
@@ -301,6 +223,7 @@ def get_main_keyboard(is_admin: bool = False):
         [KeyboardButton(text="👨‍💼 Maktab maslahatchisi")]
     ]
     if is_admin:
+        keyboard.append([KeyboardButton(text="➕ Yangi so'rovnoma qo'shish")])
         keyboard.append([KeyboardButton(text="📊 Excel hisobotni yuklash")])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -333,7 +256,7 @@ bot = Bot(
 )
 dp = Dispatcher()
 
-# ================= ENG BIRINCHI: BEKOR QILISH HANDLERLARI =================
+# ================= BEKOR QILISH HANDLERLARI =================
 @dp.message(F.text == "❌ Bekor qilish")
 async def cancel_any_action(message: Message, state: FSMContext):
     await state.clear()
@@ -390,7 +313,101 @@ async def handle_clubs(message: Message):
 async def handle_council(message: Message):
     await message.answer(COUNCIL_INFO)
 
-# ================= ADMIN BUYRUQLARI =================
+# ================= 1-USUL: BITTA XABAR ORQALI SO'ROVNOMA QO'SHISH =================
+@dp.message(F.chat.id == ADMIN_ID, F.text == "➕ Yangi so'rovnoma qo'shish")
+@dp.message(F.chat.id == ADMIN_ID, Command("add_survey"))
+async def start_add_survey_template(message: Message, state: FSMContext):
+    sample = (
+        "Sarlavha: Bitiruvchilar rejalari\n"
+        "Sinflar: 9, 10, 11\n\n"
+        "1. Qaysi sohaga qiziqasiz?\n"
+        "- Axborot texnologiyalari (IT)\n"
+        "- Tibbiyot\n"
+        "- Iqtisodiyot va biznes\n\n"
+        "2. Qaysi oliygohga topshirmoqchisiz?\n"
+        "[yozma]"
+    )
+    await message.answer(
+        "📝 <b>Yangi so'rovnomani bitta xabar shaklida yuboring.</b>\n\n"
+        "<b>Namuna qolip:</b>\n"
+        f"<code>{sample}</code>\n\n"
+        "<i>Qoida: Savoldan keyin '-' bilan variantlar yozilsa tanlovli bo'ladi. "
+        "Variant yozilmasa yoki [yozma] deb qo'yilsa, o'quvchi yozadigan savol bo'ladi.</i>\n\n"
+        "Bekor qilish uchun pastdagi tugmani bosing.",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(AdminAddSurveyState.waiting_raw_text)
+
+def parse_survey_text(raw_text: str):
+    lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
+    title = ""
+    grades = []
+    questions = []
+    
+    current_q = None
+
+    for line in lines:
+        if line.lower().startswith("sarlavha:"):
+            title = line.split(":", 1)[1].strip()
+        elif line.lower().startswith("sinflar:"):
+            grade_part = line.split(":", 1)[1].strip()
+            # Raqamlarni ajratib olish
+            grades = [int(num) for num in re.findall(r'\d+', grade_part)]
+        elif re.match(r'^\d+[\.\)]', line):
+            if current_q:
+                questions.append(current_q)
+            current_q = {
+                "type": "text",
+                "question": line,
+                "options": []
+            }
+        elif line.startswith("-") or line.startswith("•"):
+            if current_q:
+                opt = line.lstrip("-•").strip()
+                current_q["options"].append(opt)
+                current_q["type"] = "choice"
+        elif "[yozma]" in line.lower():
+            if current_q:
+                current_q["type"] = "text"
+
+    if current_q:
+        questions.append(current_q)
+
+    return title, grades, questions
+
+@dp.message(AdminAddSurveyState.waiting_raw_text)
+async def process_save_survey(message: Message, state: FSMContext):
+    text = message.text.strip()
+    title, grades, questions = parse_survey_text(text)
+
+    if not title or not grades or not questions:
+        await message.answer(
+            "⚠️ <b>Matn formati noto'g'ri!</b>\n"
+            "Sarlavha, Sinflar va kamida 1 ta savol to'g'ri kiritilganiga ishonch hosil qiling va qayta yuboring."
+        )
+        return
+
+    survey_id = f"custom_{int(asyncio.get_event_loop().time())}"
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            INSERT INTO custom_surveys (id, title, grades_json, questions_json)
+            VALUES (?, ?, ?, ?)
+        """, (survey_id, title, json.dumps(grades), json.dumps(questions, ensure_ascii=False)))
+        await db.commit()
+
+    await state.clear()
+    is_admin = True
+    await message.answer(
+        f"✅ <b>Yangi so'rovnoma muvaffaqiyatli saqlandi!</b>\n\n"
+        f"📌 <b>Nomi:</b> {title}\n"
+        f"👥 <b>Sinflar:</b> {', '.join(map(str, grades))}-sinflar\n"
+        f"❓ <b>Savollar soni:</b> {len(questions)} ta\n\n"
+        f"Ushbu sinf o'quvchilari endi botga kirganda ushbu so'rovnomani to'ldiradilar.",
+        reply_markup=get_main_keyboard(is_admin)
+    )
+
+# ================= ADMIN BUYRUQLARI (POST VA SMS) =================
 @dp.message(F.chat.id == ADMIN_ID, Command("post"))
 async def admin_broadcast_message(message: Message):
     text = message.text.replace("/post", "", 1).strip()
@@ -570,8 +587,10 @@ async def process_grade_letter(callback: CallbackQuery, state: FSMContext):
     full_grade = f"{grade_num}-{grade_letter}"
     await state.update_data(full_grade=full_grade)
 
+    surveys = await get_all_surveys()
     selected_survey = None
-    for s in SURVEYS:
+    # Eng oxirgi qo'shilgan so'rovnomani birinchi navbatda tekshiramiz
+    for s in reversed(surveys):
         if grade_num in s["grades"]:
             selected_survey = s
             break
@@ -610,7 +629,7 @@ async def send_next_question(message: Message, state: FSMContext, is_first: bool
 
     if q_type == "choice":
         keyboard = []
-        for opt in q_data["options"]:
+        for opt in q_data.get("options", []):
             cb_data = f"ans_{opt[:25]}"
             keyboard.append([InlineKeyboardButton(text=opt, callback_data=cb_data)])
         keyboard.append([InlineKeyboardButton(text="❌ So'rovnomani to'xtatish", callback_data="cancel_survey")])
@@ -619,7 +638,7 @@ async def send_next_question(message: Message, state: FSMContext, is_first: bool
         await message.answer(full_text, reply_markup=reply_markup)
         await state.set_state(SurveyState.answering)
     else:
-        full_text += "\n\n✍️ <i>Javobingizni xabar sifatida yozib yuboring (yoki pastdagi tugma orqali to'xtating):</i>"
+        full_text += "\n\n✍️ <i>Javobingizni xabar sifatida yozib yuboring:</i>"
         await message.answer(full_text, reply_markup=get_cancel_keyboard())
         await state.set_state(SurveyState.answering)
 
@@ -631,7 +650,7 @@ async def handle_choice_answer(callback: CallbackQuery, state: FSMContext):
     q_idx = data["q_idx"]
     q_data = survey["questions"][q_idx]
 
-    full_answer = next((opt for opt in q_data["options"] if opt.startswith(chosen_short)), chosen_short)
+    full_answer = next((opt for opt in q_data.get("options", []) if opt.startswith(chosen_short)), chosen_short)
     await save_and_proceed(callback.message, state, q_data["question"], full_answer, callback.from_user.id)
     await callback.answer()
 
@@ -785,7 +804,7 @@ async def generate_excel_report(message: Message):
     if os.path.exists(file_path):
         os.remove(file_path)
 
-# ================= RENDER UCHUN MINI VEB-SERVER =================
+# ================= RENDER MINI VEB-SERVER =================
 async def handle_ping(request):
     return web.Response(text="Bot 24/7 faol ishlamoqda!")
 
